@@ -1,0 +1,31 @@
+{
+  "name": "enhanced-list",
+  "label": "Liste Améliorée",
+  "type": "widget",
+  "version": "1.16.0",
+  "exbVersion": "1.16.0",
+  "author": "Belouar-Pruvot Mathis",
+  "description": "Widget de liste amélioré",
+  "copyright": "",
+  "license": "",
+  "properties": {
+    "hasConfig": true,
+    "hasSettingPage": true,
+    "supportAutoSize": true,
+    "hasLayoutItemSettingPage": true,
+    "supportResizeToContent": false,
+    "lockLayout": false,
+    "layoutType": "Fixed",
+    "supportInlineEditing": true,
+    "supportRepeat": true,
+    "supportDataAction": true,
+    "hasDataSupport": true,
+    "canCreateDataSource": true,
+    "watchViewportVisibility": true
+  },
+  "translatedLocales": ["fr"],
+  "defaultSize": {
+    "width": 400,
+    "height": 400
+  }
+}

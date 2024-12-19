@@ -1,0 +1,72 @@
+.widget-enhanced-list {
+    height: 100%;
+  }
+  
+  .widget-enhanced-list .widget-content {
+    height: 100%;
+    border: 1px solid var(--light-400);
+    border-radius: 8px;
+    background: var(--white);
+  }
+  
+  .widget-enhanced-list .list-container {
+    max-height: calc(100% - 120px);
+    overflow-y: auto;
+  }
+  
+  .widget-enhanced-list .tag-filter {
+    padding: 0.75rem;
+    border-bottom: 1px solid var(--light-400);
+  }
+  
+  .widget-enhanced-list .tag-button {
+    font-size: 0.875rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+  }
+  
+  .widget-enhanced-list .pagination-controls {
+    padding: 0.75rem;
+    border-top: 1px solid var(--light-400);
+    background-color: var(--light-100);
+  }
+  
+  .widget-enhanced-list .score-controls {
+    display: flex;
+    align-items: center;
+    background-color: var(--light-100);
+    border-radius: 9999px;
+    padding: 0.5rem 1rem;
+  }
+  
+  .widget-enhanced-list .score-button {
+    min-width: 2rem;
+    height: 2rem;
+    border-radius: 9999px;
+  }
+
+  .search-box-container .jimu-btn {
+    position: absolute;
+    right: 0;
+    top: 0;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    z-index: 2;
+  }
+  
+  .search-box-container .form-control {
+    padding-right: 40px;
+  }
+  
+  .search-box-container .jimu-btn:hover {
+    background-color: #f8f9fa;
+  }
+  
+  .search-box-container .search-icon {
+    margin: 0;
+    line-height: 1;
+  }
