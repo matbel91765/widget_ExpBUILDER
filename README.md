@@ -49,25 +49,6 @@ Widget Experience Builder combinant une liste interactive avec un système de re
 
 ### Structure des Données
 La source de données doit contenir les champs suivants :
-```typescript
-{
-  title: string;          // Titre de l&eposélément
-  summary?: string;       // Description (optionnel)
-  category?: string;      // Catégorie (optionnel)
-  tags?: string;         // Tags séparés par des virgules
-  score?: number;        // Score de l&eposélément
-  url?: string;          // Lien externe (optionnel)
-}
-
-## Configuration du Widget
-
-### Prérequis
-- Experience Builder 1.12 ou supérieur
-- Source de données de type FeatureLayer
-- Droits d&eposédition sur la source de données pour le scoring
-
-### Structure des Données
-La source de données doit contenir les champs suivants :
 
 {
   title: string;          // Titre de l&eposélément
