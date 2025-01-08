@@ -13,7 +13,7 @@ import {
 } from 'jimu-core'
 
 import { type IMConfig } from '../config'
-import { Button, Loading } from 'jimu-ui'
+import { Loading, Select } from 'jimu-ui'
 import ListItem from './components/list-item'
 import EmptyState from './components/empty-state'
 import SearchBox from './components/search-box'
@@ -29,17 +29,24 @@ interface State {
   selectedRecords: DataRecord[]
   containerWidth: number
   containerHeight: number
-  currentPage: number
-  itemsPerPage: number
   selectedTag: string | null
   searchActive: boolean
   searchScores: { [key: string]: number }
   originalRecords: DataRecord[]
+  selectedSource: string | null
+  selectedCategory: string | null
+  selectedProduct: string | null
+  selectedLanguage: string | null
+  loadingMore: boolean
+  itemsToShow: number // Nombre d'éléments actuellement affichés
 }
 
 export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>, State> {
   // Référence pour le conteneur principal du widget
   containerRef: React.RefObject<HTMLDivElement>
+
+  editingPromise: Promise<boolean> | null = null
+  isEditingInitialized = false
 
   constructor (props) {
     super(props)
@@ -52,12 +59,16 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
       selectedRecords: [],
       containerWidth: 0,
       containerHeight: 0,
-      currentPage: 1,
-      itemsPerPage: 20,
       selectedTag: null,
       searchActive: false,
       searchScores: {},
-      originalRecords: []
+      originalRecords: [],
+      selectedSource: null,
+      selectedCategory: null,
+      selectedProduct: null,
+      selectedLanguage: null,
+      loadingMore: false,
+      itemsToShow: 20 // Nombre initial d'éléments à afficher
     }
     this.containerRef = React.createRef()
   }
@@ -187,144 +198,193 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
     }
   }
 
-  componentDidMount () {
-    console.log('componentDidMount - Début')
+  async componentDidMount () {
     const { useDataSources } = this.props
-    console.log('useDataSources:', useDataSources)
 
     if (useDataSources?.[0]) {
-      console.log('DataSource ID à charger:', useDataSources[0].dataSourceId)
       const ds = DataSourceManager.getInstance().getDataSource(useDataSources[0].dataSourceId)
-      console.log('DataSource obtenue:', ds)
-
       if (ds) {
-        console.log('État initial de la source:', {
-          id: ds.id,
-          status: ds.getStatus(),
-          isQueriable: 'query' in ds
-        })
+        try {
+          await ds.ready()
+
+          // Explorer la structure de la source de données
+          console.log('Informations détaillées de la source:', {
+            type: ds.type,
+            id: ds.id,
+            url: (ds as any).url,
+            methods: Object.getOwnPropertyNames(Object.getPrototypeOf(ds)),
+            layerInfo: (ds as any).layerDefinition,
+            jimuSource: (ds as any).jimuChildDataSource,
+            capabilities: (ds as any).getCapabilities?.()
+          })
+        } catch (error) {
+          console.error('Erreur lors de l\'initialisation:', error)
+        }
       }
     }
   }
 
-  // Fonctionnalités de recherche
-  handleSearch = (query: string) => {
+  handleScroll = (event: React.UIEvent<HTMLDivElement>) => {
+    const { scrollTop, clientHeight, scrollHeight } = event.currentTarget
+    const threshold = 100 // pixels avant la fin du scroll
+    const { loadingMore, itemsToShow, records } = this.state
+
+    // On vérifie aussi si on a déjà chargé toutes les données disponibles
+    if (!loadingMore &&
+        scrollHeight - scrollTop - clientHeight < threshold &&
+        itemsToShow < records.length) { // Ajout de cette condition
+      this.loadMoreItems()
+    }
+  }
+
+  loadMoreItems = () => {
+    // On vérifie d'abord si il y a encore des éléments à charger
+    const { itemsToShow, records } = this.state
+    const hasMoreItems = itemsToShow < records.length
+
+    if (!hasMoreItems) return
+
+    this.setState(prevState => ({
+      loadingMore: true
+    }), () => {
+      setTimeout(() => {
+        this.setState(prevState => ({
+          itemsToShow: Math.min(prevState.itemsToShow + 20, records.length), // On limite au nombre total d'éléments
+          loadingMore: false
+        }))
+      }, 500)
+    })
+  }
+
+  getUniqueValues = (field: string): string[] => {
     const { originalRecords } = this.state
+    const values = new Set<string>()
+
+    originalRecords.forEach(record => {
+      const value = record.getData()[field]
+      if (value) values.add(value.toString())
+    })
+
+    return Array.from(values).sort()
+  }
+
+  handleFilterChange = (filterType: string, value: string) => {
+    this.setState({
+      [`selected${filterType}`]: value,
+      itemsToShow: 20 // Réinitialise le nombre d'éléments affichés
+    } as any)
+  }
+
+  // Fonctionnalités de recherche
+  handleSearch = async (query: string) => {
+    const { dataSource } = this.state
     const trimmedQuery = query.trim()
 
-    if (!query.trim()) {
-      this.setState({
-        records: originalRecords,
-        searchActive: false,
-        searchScores: {},
-        currentPage: 1
-      })
-      return
-    }
-
-    // Si la recherche est vide, réinitialiser
     if (!trimmedQuery) {
-      this.setState({
-        records: originalRecords,
-        searchActive: false,
-        searchScores: {},
-        currentPage: 1
-      })
+      this.onDataSourceCreated(dataSource)
       return
     }
 
-    // Pour les requêtes très courtes (1 ou 2 caractères)
-    if (trimmedQuery.length < 3) {
-    // On cherche que les correspondances exactes ou début de mot
-      const filteredRecords = originalRecords.filter(record => {
-        const data = record.getData()
-        return this.props.config.displayFields.some(field => {
-          const value = data[field]
-          if (!value) return false
-          const strValue = value.toString().toLowerCase()
-          // Vérification si la valeur commence par la requête
-          return strValue.split(/\s+/).some(word => word.startsWith(trimmedQuery.toLowerCase()))
+    try {
+      let whereClause: string
+      const fieldSearch = query.match(/^(\w+):(.*)$/)
+
+      if (fieldSearch) {
+        const [, field, value] = fieldSearch
+        whereClause = this.buildWhereClause(field, value)
+      } else {
+        const searchableFields = ['title', 'description', 'summary', 'tags', 'category', 'product', 'source', 'lang']
+        // On s'assure que la recherche trouve les variations de casse
+        const searchTerms = trimmedQuery.toLowerCase().split(/\s+/).filter(term => term.length >= 2)
+
+        const fieldClauses = searchableFields.map(field => {
+          return searchTerms.map(term =>
+            `LOWER(${field}) LIKE LOWER('%${term}%')`
+          ).join(' AND ')
+        }).filter(clause => clause !== '')
+
+        whereClause = fieldClauses.join(' OR ')
+      }
+
+      console.log('Clause WHERE:', whereClause) // Pour debug
+
+      const searchQuery: SqlQueryParams = {
+        where: whereClause,
+        outFields: ['*'],
+        orderByFields: ['objectid ASC']
+      }
+
+      const searchResults = await (dataSource as QueriableDataSource).query(searchQuery)
+      const records = searchResults?.records || []
+
+      if (records.length > 0) {
+        const searchScores = new Map<string, number>()
+        const exactTitleMatches = new Set<string>()
+
+        records.forEach(record => {
+          const data = record.getData()
+          let maxSimilarity = 0
+
+          // Vérifier les correspondances exactes dans le titre
+          if (data.title) {
+            const titleLower = data.title.toString().toLowerCase()
+            const queryLower = trimmedQuery.toLowerCase()
+
+            if (titleLower.includes(queryLower)) {
+              exactTitleMatches.add(record.getId())
+              maxSimilarity = 100 // Score max pour les correspondances de titre
+            }
+          }
+
+          // Calcul normal de similarité pour les autres champs
+          Object.keys(data).forEach(field => {
+            const fieldValue = data[field]
+            if (fieldValue) {
+              const similarity = this.calculateSimilarity(
+                fieldValue.toString(),
+                trimmedQuery
+              )
+              maxSimilarity = Math.max(maxSimilarity, similarity)
+            }
+          })
+
+          searchScores.set(record.getId(), maxSimilarity)
         })
-      })
 
-      this.setState({
-        records: filteredRecords,
-        searchActive: true,
-        searchScores: Object.fromEntries(filteredRecords.map(r => [r.getId(), 70])),
-        currentPage: 1
-      })
-      return
-    }
+        // Tri personnalisé : d'abord les correspondances exactes de titre, puis par score
+        const sortedRecords = records.sort((a, b) => {
+          const aHasExactTitle = exactTitleMatches.has(a.getId())
+          const bHasExactTitle = exactTitleMatches.has(b.getId())
 
-    const searchScores = new Map<string, number>()
-    const fieldSearch = query.match(/^(\w+):(.*)$/)
+          if (aHasExactTitle && !bHasExactTitle) return -1
+          if (!aHasExactTitle && bHasExactTitle) return 1
 
-    let filteredRecords
-    if (fieldSearch) {
-      const [, field, value] = fieldSearch
-      filteredRecords = originalRecords.filter(record => {
-        const fieldValue = record.getData()[field]
-        if (!fieldValue) return false
+          // Si même niveau de correspondance titre, trier par score
+          return (searchScores.get(b.getId()) || 0) - (searchScores.get(a.getId()) || 0)
+        })
 
-        const similarity = this.calculateSimilarity(
-          fieldValue.toString(),
-          value
-        )
-        if (similarity > 0) {
-          searchScores.set(record.getId(), similarity)
-          return true
-        }
-        return false
-      })
-    } else {
-      const searchTerms = query.toLowerCase().split(/\s+/).filter(term => term.length >= 2)
-
-      if (searchTerms.length === 0) {
+        this.setState({
+          records: sortedRecords,
+          searchActive: true,
+          searchScores: Object.fromEntries(searchScores),
+          itemsToShow: 20
+        })
+      } else {
         this.setState({
           records: [],
           searchActive: true,
           searchScores: {},
-          currentPage: 1
+          itemsToShow: 20
         })
-        return
       }
-
-      filteredRecords = originalRecords.filter(record => {
-        const data = record.getData()
-        let maxSimilarity = 0
-
-        this.props.config.displayFields.forEach(field => {
-          const fieldValue = data[field]
-          if (fieldValue) {
-            const similarity = this.calculateSimilarity(
-              fieldValue.toString(),
-              query
-            )
-            maxSimilarity = Math.max(maxSimilarity, similarity)
-          }
-        })
-
-        if (maxSimilarity > 0) {
-          searchScores.set(record.getId(), maxSimilarity)
-          return true
-        }
-        return false
-      })
+    } catch (error) {
+      console.error('Erreur lors de la recherche:', error)
     }
+  }
 
-    // Triage par score de pertinence
-    filteredRecords.sort((a, b) => {
-      const scoreA = searchScores.get(a.getId()) || 0
-      const scoreB = searchScores.get(b.getId()) || 0
-      return scoreB - scoreA
-    })
-
-    this.setState({
-      records: filteredRecords,
-      currentPage: 1,
-      searchActive: true,
-      searchScores: Object.fromEntries(searchScores)
-    })
+  private readonly buildWhereClause = (field: string, value: string): string => {
+    const escapedValue = value.replace(/'/g, "''")
+    return `LOWER(${field}) LIKE LOWER('%${escapedValue}%')`
   }
 
   //  fonction de calcul de similarité
@@ -411,50 +471,106 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
     return matrix[str2.length][str1.length]
   }
 
-  // Mise à jour du score d'un enregistrement
   handleScoreUpdate = async (recordId: string, increment: boolean): Promise<void> => {
     const { dataSource, records } = this.state
     const { scoreField } = this.props.config
 
-    if (!dataSource || !scoreField) return
+    if (!dataSource || !scoreField) {
+      throw new Error('Configuration invalide')
+    }
 
     try {
+      // S'assurer que la source est prête
       await dataSource.ready()
 
-      // Trouve l'enregistrement à mettre à jour
+      // Récupérer l'enregistrement à mettre à jour
       const record = records.find(r => r.getId() === recordId)
-      if (!record) return
+      if (!record) {
+        throw new Error('Enregistrement non trouvé')
+      }
 
       const currentData = record.getData()
       const currentScore = currentData[scoreField] || 0
-      const newScore = increment ? currentScore + 1 : currentScore - 1
+      const newScore = increment ? currentScore + 1 : Math.max(0, currentScore - 1)
 
-      // Création d'un nouvel objet avec toutes les données
-      const updatedData = {
-        ...currentData,
-        [scoreField]: newScore
+      // Construire l'URL de mise à jour
+      const serviceUrl = (dataSource as any).url
+      const applyEditsUrl = `${serviceUrl}/applyEdits`
+
+      // Construire l'objet de mise à jour
+      const updateFeature = {
+        attributes: {
+          // Utiliser l'ID de l'objet pour la mise à jour
+          objectid: recordId,
+          [scoreField]: newScore
+        }
       }
 
-      try {
-        // Mise à jour de l'enregistrement dans la source de données
-        await dataSource.updateRecord(updatedData)
+      // Préparer les paramètres de la requête
+      const params = {
+        f: 'json',
+        updates: JSON.stringify([updateFeature])
+      }
 
-        // Mise à jour de l'état local
-        const updatedRecords = records.map(r =>
-          r.getId() === recordId
-            ? { ...r, data: updatedData }
-            : r
-        )
+      // Convertir les paramètres en chaîne de requête
+      const formData = new URLSearchParams()
+      Object.entries(params).forEach(([key, value]) => {
+        formData.append(key, value)
+      })
 
-        this.setState({
-          records: updatedRecords,
-          originalRecords: updatedRecords
+      // Effectuer la requête de mise à jour
+      console.log('Envoi de la requête de mise à jour:', {
+        url: applyEditsUrl,
+        feature: updateFeature
+      })
+
+      const response = await fetch(applyEditsUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: formData
+      })
+
+      if (!response.ok) {
+        throw new Error(`Erreur HTTP: ${response.status}`)
+      }
+
+      const result = await response.json()
+      console.log('Résultat de la mise à jour:', result)
+
+      // Vérifier si la mise à jour a réussi
+      if (result.updateResults?.[0]?.success) {
+        // Mise à jour réussie, mettre à jour l'état local
+        const recordToUpdate = record.clone()
+        recordToUpdate.setData({
+          ...currentData,
+          [scoreField]: newScore
         })
-      } catch (error) {
-        console.error('Erreur lors de la mise à jour du score:', error)
+
+        this.setState(prevState => ({
+          records: prevState.records.map(r =>
+            r.getId() === recordId ? recordToUpdate : r
+          ),
+          originalRecords: prevState.originalRecords.map(r =>
+            r.getId() === recordId ? recordToUpdate : r
+          )
+        }))
+
+        console.log('Mise à jour réussie !')
+      } else {
+        // La mise à jour a échoué
+        const error = result.updateResults?.[0]?.error || 'Erreur inconnue'
+        throw new Error(`La mise à jour a échoué: ${error.description || error}`)
       }
     } catch (error) {
-      console.error('Erreur lors de la préparation de la mise à jour:', error)
+      console.error('Erreur détaillée lors de la mise à jour:', {
+        error,
+        serviceUrl: (dataSource as any).url,
+        recordId,
+        scoreField
+      })
+      throw error
     }
   }
 
@@ -479,11 +595,12 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
       isLoading,
       error,
       dataSource,
-      currentPage,
-      itemsPerPage,
-      selectedTag,
       searchActive,
-      originalRecords
+      originalRecords,
+      selectedSource,
+      selectedCategory,
+      selectedProduct,
+      selectedLanguage
     } = this.state
     const { config } = this.props
 
@@ -538,99 +655,120 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
       />
     }
 
-    // Filtrer les records par tag si nécessaire
-    const filteredRecords = selectedTag
-      ? records.filter(record => {
-        const data = record.getData()
-        return data.tags && data.tags.toLowerCase().includes(selectedTag.toLowerCase())
-      })
-      : records
+    // Filtrer les records selon les critères sélectionnés
+    let filteredRecords = records
 
-    // Pagination
-    const totalRecords = filteredRecords.length
-    const totalPages = Math.ceil(totalRecords / itemsPerPage)
-    const startIndex = (currentPage - 1) * itemsPerPage
-    const paginatedRecords = filteredRecords.slice(startIndex, startIndex + itemsPerPage)
+    if (selectedSource) {
+      filteredRecords = filteredRecords.filter(record =>
+        record.getData().source === selectedSource)
+    }
 
-    // Récupérer tous les tags uniques
-    const allTags = new Set<string>()
-    records.forEach(record => {
-      const data = record.getData()
-      if (data.tags) {
-        data.tags.split(',').forEach(tag => {
-          allTags.add(tag.trim())
-        })
-      }
-    })
+    if (selectedCategory) {
+      filteredRecords = filteredRecords.filter(record =>
+        record.getData().category === selectedCategory)
+    }
+
+    if (selectedProduct) {
+      filteredRecords = filteredRecords.filter(record =>
+        record.getData().product === selectedProduct)
+    }
+
+    if (selectedLanguage) {
+      filteredRecords = filteredRecords.filter(record =>
+        record.getData().lang === selectedLanguage)
+    }
 
     return (
-      <div className="widget-content h-100 d-flex flex-column">
-        {/* Barre de recherche */}
-        <div className="search-container p-3 border-bottom">
-          <SearchBox
-            onSearch={this.handleSearch}
-            records={records}
-            fields={Array.isArray(this.props.config.displayFields)
-              ? this.props.config.displayFields
-              : Array.from(this.props.config.displayFields)}
-          />
-        </div>
-        {/* Filtre de tags */}
-        <div className="tag-filter p-3 border-bottom">
-          <div className="d-flex flex-wrap gap-2">
-            {Array.from(allTags).map(tag => (
-              <Button
-                key={tag}
-                type={selectedTag === tag ? 'primary' : 'default'}
-                className="tag-button"
-                onClick={() => { this.setState({ selectedTag: selectedTag === tag ? null : tag, currentPage: 1 }) }}
-              >
-                {tag}
-              </Button>
+    <div className="widget-content">
+      {/* Barre de recherche */}
+      <div className="search-container">
+        <SearchBox
+          onSearch={this.handleSearch}
+          records={records}
+          fields={Array.isArray(this.props.config.displayFields)
+            ? this.props.config.displayFields
+            : Array.from(this.props.config.displayFields)}
+        />
+      </div>
+
+      <div className="main-content">
+        {/* Filtres avec des Select */}
+        <div className="filters-section">
+          <Select
+            placeholder="Source"
+            onChange={(evt) => { this.handleFilterChange('Source', evt.target.value) }}
+            value={selectedSource || ''}
+            className="w-full"
+          >
+            <option value="">Toutes les sources</option>
+            {this.getUniqueValues('source').map(source => (
+              <option key={source} value={source}>{source}</option>
             ))}
-          </div>
+          </Select>
+
+          <Select
+            placeholder="Catégorie"
+            onChange={(evt) => { this.handleFilterChange('Category', evt.target.value) }}
+            value={selectedCategory || ''}
+            className="w-full"
+          >
+            <option value="">Toutes les catégories</option>
+            {this.getUniqueValues('category').map(category => (
+              <option key={category} value={category}>{category}</option>
+            ))}
+          </Select>
+
+          <Select
+            placeholder="Produit"
+            onChange={(evt) => { this.handleFilterChange('Product', evt.target.value) }}
+            value={selectedProduct || ''}
+            className="w-full"
+          >
+            <option value="">Tous les produits</option>
+            {this.getUniqueValues('product').map(product => (
+              <option key={product} value={product}>{product}</option>
+            ))}
+          </Select>
+
+          <Select
+            placeholder="Langue"
+            onChange={(evt) => { this.handleFilterChange('Language', evt.target.value) }}
+            value={selectedLanguage || ''}
+            className="w-full"
+          >
+            <option value="">Toutes les langues</option>
+            {this.getUniqueValues('lang').map(lang => (
+              <option key={lang} value={lang}>{lang}</option>
+            ))}
+          </Select>
         </div>
 
-        {/* Liste avec scroll */}
-        <div className="list-container flex-grow-1 overflow-auto p-3">
-          <div className="list-content">
-            {paginatedRecords.map(record => (
+        {/* Section des résultats avec infinite scroll */}
+        <div className="results-section">
+          <div
+            className="results-list"
+            onScroll={this.handleScroll}
+          >
+            {filteredRecords.slice(0, this.state.itemsToShow).map(record => (
               <ListItem
                 key={record.getId()}
                 record={record}
                 config={config}
                 onScoreUpdate={this.handleScoreUpdate}
                 searchScore={this.state.searchScores[record.getId()]}
-                searchActive={this.state.searchActive}
+                searchActive={searchActive}
               />
             ))}
-          </div>
-        </div>
 
-        {/* Pagination */}
-        <div className="pagination-controls p-3 border-top d-flex justify-content-between align-items-center">
-          <span>
-            Affichage {startIndex + 1} - {Math.min(startIndex + itemsPerPage, totalRecords)} sur {totalRecords}
-          </span>
-          <div className="d-flex gap-2">
-            <Button
-              disabled={currentPage === 1}
-              onClick={() => { this.setState({ currentPage: currentPage - 1 }) }}
-            >
-              Précédent
-            </Button>
-            <span className="mx-3">
-              Page {currentPage} sur {totalPages}
-            </span>
-            <Button
-              disabled={currentPage === totalPages}
-              onClick={() => { this.setState({ currentPage: currentPage + 1 }) }}
-            >
-              Suivant
-            </Button>
+            {this.state.loadingMore && (
+              <div className="flex justify-center p-4">
+                <Loading />
+              </div>
+            )}
           </div>
         </div>
       </div>
+    </div>
     )
   }
 

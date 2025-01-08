@@ -21,7 +21,9 @@
     "supportDataAction": true,
     "hasDataSupport": true,
     "canCreateDataSource": true,
-    "watchViewportVisibility": true
+    "supportEditData": true,
+    "watchViewportVisibility": true,
+    "supportEditDataSource": true
   },
   "translatedLocales": ["fr"],
   "defaultSize": {

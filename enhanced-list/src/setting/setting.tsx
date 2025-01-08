@@ -8,7 +8,9 @@ import {
   DataSourceManager,
   JimuFieldType as JimuFieldTypes,
   type ImmutableArray,
-  AllDataSourceTypes
+  AllDataSourceTypes,
+  type FeatureLayerDataSource,
+  type QueriableDataSource
 } from 'jimu-core'
 import { type AllWidgetSettingProps } from 'jimu-for-builder'
 import { type IMConfig } from '../config'
@@ -33,6 +35,25 @@ interface State {
 
 export default class Setting extends React.PureComponent<AllWidgetSettingProps<IMConfig>, State> {
   supportedDsTypes = Immutable([DataSourceTypes.FeatureLayer])
+
+  getDsSupportedTypes = () => {
+    return [{
+      types: this.supportedDsTypes,
+      fromTypes: this.supportedDsTypes,
+      createable: false,
+      updateable: true,
+      deletable: false,
+      isOutputFromRepeatedDataSourceContext: false,
+      isOutputDataSource: false,
+      capabilities: {
+        supportsEditing: true,
+        supportsCreate: false,
+        supportsUpdate: true,
+        supportsDelete: false,
+        supportsQuery: true
+      }
+    }]
+  }
 
   constructor (props) {
     super(props)
@@ -59,6 +80,41 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
     }
   }
 
+  checkEditingCapabilities = async (dataSourceId: string) => {
+    const ds = DataSourceManager.getInstance().getDataSource(dataSourceId)
+
+    if (!ds) {
+      console.error('Source de données non trouvée')
+      return false
+    }
+
+    const isFeatureLayer = ds.type === DataSourceTypes.FeatureLayer
+
+    if (!isFeatureLayer) {
+      console.error('La source n\'est pas une Feature Layer')
+      return false
+    }
+
+    const isQueriable = 'query' in ds
+    const canUpdate = 'updateRecords' in ds
+
+    if (isFeatureLayer && isQueriable) {
+      const featureLayer = ds as FeatureLayerDataSource & QueriableDataSource
+      const layerInfo = featureLayer.getLayerDefinition()
+      const capabilities = layerInfo?.capabilities?.split(',') || []
+
+      console.log('Informations de la couche:', {
+        allowGeometryUpdates: layerInfo?.allowGeometryUpdates,
+        capabilities,
+        hasUpdateCapability: capabilities.includes('Update')
+      })
+
+      return canUpdate && capabilities.includes('Update')
+    }
+
+    return false
+  }
+
   // Gestion du changement de source de données
   onDataSourceChange = async (useDataSources: UseDataSource[]): Promise<void> => {
     if (!useDataSources || useDataSources.length === 0) {
@@ -70,36 +126,37 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
       return
     }
 
-    const formattedDataSources = useDataSources.map(ds => ({
-      dataSourceId: ds.dataSourceId,
-      mainDataSourceId: ds.mainDataSourceId,
-      rootDataSourceId: ds.rootDataSourceId,
-      fields: ['*'],
-      useFieldsInPopupInfo: true,
-      useFieldsInSymbol: false
-    }))
-
-    // Vérification la source de données
     try {
-      const ds = await DataSourceManager.getInstance().createDataSourceByUseDataSource(
-        Immutable(useDataSources[0])
-      )
+      const formattedDataSources = useDataSources.map(ds => ({
+        ...ds,
+        fields: ['*'],
+        useFieldsInPopupInfo: true,
+        useFieldsInSymbol: false,
+        enableEdit: true, // Forcé à true pour permettre l'édition
+        enableCreate: false,
+        enableDelete: false,
+        isEditableDataSource: true, // indique que la source est éditable
+        supportUpdateRecords: true, // active explicitement la mise à jour
+        editableInfo: { // configuration détaillée de l'édition
+          enableCreate: false,
+          enableDelete: false,
+          enableEdit: true,
+          enableGeometryEdit: false
+        }
+      }))
 
-      if (ds) {
-        const schema = ds.getSchema()
-        const availableFields = schema?.fields ? Object.keys(schema.fields) : []
-        console.log('Champs disponibles:', availableFields)
-
-        this.props.onSettingChange({
-          id: this.props.id,
-          useDataSources: formattedDataSources,
-          config: this.props.config
-            .set('displayFields', availableFields)
-            .set('useDataSource', formattedDataSources)
-        })
-      }
+      this.props.onSettingChange({
+        id: this.props.id,
+        useDataSources: formattedDataSources,
+        config: this.props.config
+          .set('useDataSource', formattedDataSources)
+          .set('enableScore', true)
+          .set('editingEnabled', true)
+          .set('allowUpdates', true)
+      })
     } catch (error) {
       console.error('Erreur lors de la configuration:', error)
+      this.setState({ invalidDataSource: true })
     }
   }
 
