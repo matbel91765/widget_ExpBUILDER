@@ -5,12 +5,9 @@ import {
   type IMFieldSchema,
   type UseDataSource,
   type JimuFieldType,
-  DataSourceManager,
   JimuFieldType as JimuFieldTypes,
   type ImmutableArray,
-  AllDataSourceTypes,
-  type FeatureLayerDataSource,
-  type QueriableDataSource
+  AllDataSourceTypes
 } from 'jimu-core'
 import { type AllWidgetSettingProps } from 'jimu-for-builder'
 import { type IMConfig } from '../config'
@@ -78,41 +75,6 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
       invalidDataSource: false,
       showFieldsAlert: false
     }
-  }
-
-  checkEditingCapabilities = async (dataSourceId: string) => {
-    const ds = DataSourceManager.getInstance().getDataSource(dataSourceId)
-
-    if (!ds) {
-      console.error('Source de données non trouvée')
-      return false
-    }
-
-    const isFeatureLayer = ds.type === DataSourceTypes.FeatureLayer
-
-    if (!isFeatureLayer) {
-      console.error('La source n\'est pas une Feature Layer')
-      return false
-    }
-
-    const isQueriable = 'query' in ds
-    const canUpdate = 'updateRecords' in ds
-
-    if (isFeatureLayer && isQueriable) {
-      const featureLayer = ds as FeatureLayerDataSource & QueriableDataSource
-      const layerInfo = featureLayer.getLayerDefinition()
-      const capabilities = layerInfo?.capabilities?.split(',') || []
-
-      console.log('Informations de la couche:', {
-        allowGeometryUpdates: layerInfo?.allowGeometryUpdates,
-        capabilities,
-        hasUpdateCapability: capabilities.includes('Update')
-      })
-
-      return canUpdate && capabilities.includes('Update')
-    }
-
-    return false
   }
 
   // Gestion du changement de source de données
@@ -199,38 +161,6 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
       })
     } catch (error) {
       console.error('Erreur lors de la configuration de la source des votes:', error)
-    }
-  }
-
-  // Vérification de la validité de la source de données
-  checkDataSourceValidity = async (useDataSource: UseDataSource) => {
-    try {
-      // On s'assure d'avoir une structure valide
-      const validDataSource = {
-        dataSourceId: useDataSource.dataSourceId,
-        mainDataSourceId: useDataSource.mainDataSourceId,
-        rootDataSourceId: useDataSource.rootDataSourceId
-      }
-
-      const dataSource = await DataSourceManager.getInstance().createDataSourceByUseDataSource(
-        Immutable(validDataSource)
-      )
-
-      if (!dataSource) {
-        this.setState({ invalidDataSource: true })
-        return
-      }
-
-      const schema = dataSource.getSchema()
-      if (!schema || !schema.fields) {
-        this.setState({ invalidDataSource: true })
-        return
-      }
-
-      this.setState({ invalidDataSource: false })
-    } catch (err) {
-      console.error('Erreur lors de la vérification de la source de données:', err)
-      this.setState({ invalidDataSource: true })
     }
   }
 
@@ -350,10 +280,7 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
                   useDataSources={this.props.useDataSources}
                   onChange={(allSelectedFields: IMFieldSchema[]) => {
                     const selectedField = allSelectedFields[0]
-                    this.props.onSettingChange({
-                      id: this.props.id,
-                      config: this.props.config.set('scoreField', selectedField?.name || '')
-                    })
+                    this.onScoreFieldChange({ target: { value: selectedField?.name || '' } })
                   }}
                   selectedFields={config.scoreField ? Immutable([config.scoreField]) : Immutable([])}
                   isMultiple={false}
