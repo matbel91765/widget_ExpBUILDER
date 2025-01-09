@@ -196,6 +196,7 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
     })
   }
 
+  // Rendu des paramètres
   render () {
     const { config, useDataSources } = this.props
     const { invalidDataSource } = this.state
