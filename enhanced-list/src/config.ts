@@ -7,7 +7,8 @@ import {
 
 export interface Config {
   // Configuration pour la source de données
-  useDataSource?: UseDataSource[]
+  mainDataSource?: UseDataSource[] // Pour la source principale
+  votesDataSource?: UseDataSource[] // Pour la source des votes
 
   // Configuration pour l'affichage de la liste
   displayFields: string[]
@@ -22,6 +23,9 @@ export interface Config {
   // Nouvelles propriétés pour l'édition
   editingEnabled?: boolean
   allowUpdates?: boolean
+
+  // Configuration pour la source de données des votes
+  votesDataSourceId?: string
 }
 
 export interface EditableInfo {
@@ -46,7 +50,10 @@ export const getInitialConfig = (): Config => {
     scoreField: '',
     layoutStyle: 'list',
     editingEnabled: true,
-    allowUpdates: true
+    allowUpdates: true,
+    mainDataSource: [],
+    votesDataSource: [],
+    votesDataSourceId: ''
   }
 }
 

@@ -4,7 +4,6 @@ import {
   jsx,
   DataSourceComponent,
   type AllWidgetProps,
-  DataSourceManager,
   type DataSource,
   type DataRecord,
   ReactResizeDetector,
@@ -38,7 +37,9 @@ interface State {
   selectedProduct: string | null
   selectedLanguage: string | null
   loadingMore: boolean
-  itemsToShow: number // Nombre d'éléments actuellement affichés
+  itemsToShow: number
+  votesDataSource: DataSource | null
+  userVotes: Set<string>
 }
 
 export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>, State> {
@@ -68,7 +69,9 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
       selectedProduct: null,
       selectedLanguage: null,
       loadingMore: false,
-      itemsToShow: 20 // Nombre initial d'éléments à afficher
+      itemsToShow: 20,
+      votesDataSource: null,
+      userVotes: new Set<string>()
     }
     this.containerRef = React.createRef()
   }
@@ -195,32 +198,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
         records: [],
         originalRecords: []
       })
-    }
-  }
-
-  async componentDidMount () {
-    const { useDataSources } = this.props
-
-    if (useDataSources?.[0]) {
-      const ds = DataSourceManager.getInstance().getDataSource(useDataSources[0].dataSourceId)
-      if (ds) {
-        try {
-          await ds.ready()
-
-          // Explorer la structure de la source de données
-          console.log('Informations détaillées de la source:', {
-            type: ds.type,
-            id: ds.id,
-            url: (ds as any).url,
-            methods: Object.getOwnPropertyNames(Object.getPrototypeOf(ds)),
-            layerInfo: (ds as any).layerDefinition,
-            jimuSource: (ds as any).jimuChildDataSource,
-            capabilities: (ds as any).getCapabilities?.()
-          })
-        } catch (error) {
-          console.error('Erreur lors de l\'initialisation:', error)
-        }
-      }
     }
   }
 
@@ -472,20 +449,74 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
   }
 
   handleScoreUpdate = async (recordId: string, increment: boolean): Promise<void> => {
-    const { dataSource, records } = this.state
-    const { scoreField } = this.props.config
+    const { dataSource, records, votesDataSource } = this.state
+    const { scoreField, votesDataSourceId } = this.props.config
+    const currentUser = this.props.user?.username
 
-    if (!dataSource || !scoreField) {
-      throw new Error('Configuration invalide')
+    console.log('État des sources de données:', {
+      mainDS: {
+        ready: !!dataSource?.ready,
+        status: dataSource?.getStatus(),
+        url: (dataSource as any)?.url
+      },
+      votesDS: {
+        ready: !!votesDataSource?.ready,
+        status: votesDataSource?.getStatus(),
+        url: (votesDataSource as any)?.url
+      },
+      config: {
+        scoreField,
+        votesDataSourceId: this.props.config.votesDataSourceId
+      }
+    })
+
+    if (!dataSource || !scoreField || !currentUser) {
+      console.log('Vérification initiale:', {
+        dataSource: !!dataSource,
+        scoreField,
+        currentUser,
+        votesDataSourceId
+      })
+      throw new Error('Configuration invalide ou utilisateur non connecté')
     }
 
-    try {
-      // S'assurer que la source est prête
-      await dataSource.ready()
+    console.log('Config du widget:', {
+      hasVotesDS: !!this.props.config.votesDataSource,
+      votesDataSourceId: this.props.config.votesDataSourceId,
+      votesDataSourceConfig: this.props.config.votesDataSource
+    })
 
-      // Récupérer l'enregistrement à mettre à jour
+    try {
+      await dataSource.ready()
+      console.log('Source de données principale prête')
+
+      // Vérification détaillée de la source des votes
+      if (!votesDataSource) {
+        console.error('Source des votes non disponible:', {
+          stateVotesDS: !!votesDataSource,
+          configVotesDS: !!this.props.config.votesDataSource,
+          votesDataSourceId
+        })
+        throw new Error('Source des votes non configurée')
+      }
+
+      await votesDataSource.ready()
+      console.log('Source des votes prête:', {
+        id: votesDataSource.id,
+        status: votesDataSource.getStatus()
+      })
+
+      const hasVoted = await this.checkUserVote(votesDataSource, recordId, currentUser)
+      console.log('Vérification du vote:', { hasVoted, recordId, currentUser })
+
+      if (hasVoted) {
+        console.log('Vote déjà existant pour:', { recordId, currentUser })
+        return
+      }
+
       const record = records.find(r => r.getId() === recordId)
       if (!record) {
+        console.log('Record non trouvé:', { recordId })
         throw new Error('Enregistrement non trouvé')
       }
 
@@ -493,84 +524,214 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
       const currentScore = currentData[scoreField] || 0
       const newScore = increment ? currentScore + 1 : Math.max(0, currentScore - 1)
 
-      // Construire l'URL de mise à jour
       const serviceUrl = (dataSource as any).url
       const applyEditsUrl = `${serviceUrl}/applyEdits`
 
-      // Construire l'objet de mise à jour
       const updateFeature = {
         attributes: {
-          // Utiliser l'ID de l'objet pour la mise à jour
           objectid: recordId,
           [scoreField]: newScore
         }
       }
 
-      // Préparer les paramètres de la requête
-      const params = {
-        f: 'json',
-        updates: JSON.stringify([updateFeature])
-      }
-
-      // Convertir les paramètres en chaîne de requête
-      const formData = new URLSearchParams()
-      Object.entries(params).forEach(([key, value]) => {
-        formData.append(key, value)
+      console.log('Tentative de mise à jour du score:', {
+        recordId,
+        currentScore,
+        newScore,
+        updateFeature,
+        url: applyEditsUrl
       })
 
-      // Effectuer la requête de mise à jour
-      console.log('Envoi de la requête de mise à jour:', {
-        url: applyEditsUrl,
-        feature: updateFeature
-      })
-
+      // Mise à jour du score
       const response = await fetch(applyEditsUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded'
         },
-        body: formData
+        body: new URLSearchParams({
+          f: 'json',
+          updates: JSON.stringify([updateFeature])
+        })
       })
+      console.log('Réponse de la mise à jour:', { status: response.status, ok: response.ok })
 
       if (!response.ok) {
+        console.error('Erreur de réponse HTTP:', response.status)
         throw new Error(`Erreur HTTP: ${response.status}`)
       }
 
       const result = await response.json()
       console.log('Résultat de la mise à jour:', result)
 
-      // Vérifier si la mise à jour a réussi
-      if (result.updateResults?.[0]?.success) {
-        // Mise à jour réussie, mettre à jour l'état local
-        const recordToUpdate = record.clone()
-        recordToUpdate.setData({
-          ...currentData,
-          [scoreField]: newScore
-        })
+      const voteFeature = {
+        attributes: {
+          // Conversion explicite des types
+          ElementID: String(recordId), // S'assurer que c'est une chaîne
+          UserID: String(currentUser), // S'assurer que c'est une chaîne
+          DateVote: new Date().getTime() // Timestamp en millisecondes
+        }
+      }
 
-        this.setState(prevState => ({
-          records: prevState.records.map(r =>
-            r.getId() === recordId ? recordToUpdate : r
-          ),
-          originalRecords: prevState.originalRecords.map(r =>
-            r.getId() === recordId ? recordToUpdate : r
-          )
+      // Log détaillé de la structure
+      console.log('Structure complète du vote:', {
+        schema: votesDataSource.getSchema(),
+        feature: voteFeature,
+        fields: Object.entries(voteFeature.attributes).map(([key, value]) => ({
+          name: key,
+          type: typeof value,
+          value
         }))
+      })
 
-        console.log('Mise à jour réussie !')
+      // Vérification des capacités
+      const capabilities = (votesDataSource as any).capabilities
+      console.log('Capacités de la source:', {
+        capabilities,
+        supportsCreate: capabilities?.supportsCreate,
+        supportsEditing: capabilities?.supportsEditing
+      })
+
+      if (result.updateResults?.[0]?.success) {
+        console.log('Mise à jour du score réussie, tentative d\'ajout du vote')
+
+        if (votesDataSource) {
+          try {
+            // Vérifier si la source est prête
+            await votesDataSource.ready()
+
+            // Construction du feature avec les champs requis
+            const voteFeature = {
+              attributes: {
+                objectid: null,
+                elementid: String(recordId),
+                userid: String(currentUser),
+                datevote: new Date().getTime()
+              }
+            }
+
+            // Préparation des paramètres de la requête
+            const parameters = new URLSearchParams({
+              f: 'json',
+              adds: JSON.stringify([voteFeature]),
+              rollbackOnFailure: 'true' // Important pour la gestion des erreurs
+            })
+
+            // Envoi de la requête
+            const voteResponse = await fetch(`${(votesDataSource as any).url}/applyEdits`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+              },
+              body: parameters
+            })
+
+            if (!voteResponse.ok) {
+              throw new Error(`Erreur HTTP: ${voteResponse.status}`)
+            }
+
+            const voteResult = await voteResponse.json()
+            console.log('Résultat complet de l\'ajout du vote:', voteResult)
+
+            if (voteResult.addResults?.[0]?.success) {
+              // Succès - mise à jour de l'interface
+              this.setState(prevState => ({
+                userVotes: new Set([...prevState.userVotes, recordId])
+              }))
+            } else {
+              // Échec - log détaillé et lancement d'erreur
+              const error = voteResult.addResults?.[0]?.error
+              console.error('Détails de l\'erreur:', {
+                error,
+                result: voteResult,
+                feature: voteFeature
+              })
+              throw new Error(error?.description || 'Erreur inconnue lors de l\'ajout du vote')
+            }
+          } catch (error) {
+            console.error('Erreur lors de l\'ajout du vote:', error)
+            throw error
+          }
+        } else {
+          console.warn('Source de données des votes non disponible')
+        }
       } else {
-        // La mise à jour a échoué
+        console.error('Échec de la mise à jour du score:', result)
         const error = result.updateResults?.[0]?.error || 'Erreur inconnue'
         throw new Error(`La mise à jour a échoué: ${error.description || error}`)
       }
     } catch (error) {
       console.error('Erreur détaillée lors de la mise à jour:', {
         error,
-        serviceUrl: (dataSource as any).url,
+        dataSourceUrl: (dataSource as any).url,
+        votesDataSourceUrl: (votesDataSource as any)?.url,
         recordId,
         scoreField
       })
       throw error
+    }
+  }
+
+  loadUserVotes = async () => {
+    const { votesDataSource } = this.state
+    const currentUser = this.props.user?.username
+
+    if (!votesDataSource || !currentUser) {
+      return
+    }
+
+    try {
+      // Conversion des paramètres en chaînes de caractères
+      const queryParams = {
+        where: `UserID = '${currentUser}'`,
+        outFields: 'ElementID', // Changé en chaîne au lieu d'un tableau
+        f: 'json'
+      }
+
+      const response = await fetch(`${(votesDataSource as any).url}/query?${new URLSearchParams(queryParams)}`)
+      const result = await response.json()
+
+      if (result.features) {
+        // Création d'un nouveau Set avec typage explicite
+        const votes = new Set<string>(
+          result.features.map((f: any) => String(f.attributes.ElementID))
+        )
+
+        // Maintenant que votes est correctement typé, nous pouvons le mettre dans l'état
+        this.setState({ userVotes: votes })
+      }
+    } catch (error) {
+      console.error('Erreur lors du chargement des votes:', error)
+    }
+  }
+
+  // Fonction auxiliaire pour vérifier si l'utilisateur a déjà voté
+  private async checkUserVote (
+    votesDataSource: DataSource | null,
+    elementId: string,
+    username: string | undefined
+  ): Promise<boolean> {
+    if (!votesDataSource || !username) {
+      return false
+    }
+
+    try {
+      // Conversion des paramètres pour respecter le type Record<string, string>
+      const queryParams = {
+        where: `ElementID = '${elementId}' AND UserID = '${username}'`,
+        returnCountOnly: 'true', // Converti en string au lieu de boolean
+        f: 'json'
+      }
+
+      const response = await fetch(`${(votesDataSource as any).url}/query?${new URLSearchParams(queryParams)}`)
+      if (!response.ok) {
+        throw new Error('Erreur lors de la vérification du vote')
+      }
+
+      const result = await response.json()
+      return result.count > 0
+    } catch (error) {
+      console.error('Erreur lors de la vérification du vote:', error)
+      return false
     }
   }
 
@@ -757,6 +918,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
                 onScoreUpdate={this.handleScoreUpdate}
                 searchScore={this.state.searchScores[record.getId()]}
                 searchActive={searchActive}
+                hasVoted={this.state.userVotes.has(record.getId())}
               />
             ))}
 
@@ -773,33 +935,53 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
   }
 
   render (): JSX.Element {
-    const { useDataSources } = this.props
+    // Récupération des props nécessaires
+    const { useDataSources, config } = this.props
 
-    return (
-      <div
-        className="widget-enhanced-list jimu-widget h-100"
-        ref={this.containerRef}
+    // Extraction des sources de données
+    const mainDataSource = useDataSources?.[0]
+    const votesDataSource = config.votesDataSource?.[0]
+
+    // Construction du contenu du widget
+    const content = mainDataSource
+      ? (
+      <DataSourceComponent
+        useDataSource={mainDataSource}
+        onDataSourceCreated={this.onDataSourceCreated}
+        onCreateDataSourceFailed={this.onCreateDataSourceFailed}
+        widgetId={this.props.id}
+        query={this.queryParams}
       >
-        <ReactResizeDetector
-          handleWidth
-          handleHeight
-          onResize={this.handleResize}
-        >
-          {useDataSources?.[0]
-            ? (
-            <DataSourceComponent
-              useDataSource={useDataSources[0]}
-              onDataSourceCreated={this.onDataSourceCreated}
-              onCreateDataSourceFailed={this.onCreateDataSourceFailed}
-              widgetId={this.props.id}
-              query={this.queryParams}
-            >
-              {this.renderContent()}
-            </DataSourceComponent>
-              )
-            : (
-                this.renderContent()
-              )}
+        {votesDataSource
+          ? (
+          <DataSourceComponent
+            useDataSource={votesDataSource}
+            onDataSourceCreated={(ds) => {
+              console.log('Source des votes créée:', ds)
+              this.setState({ votesDataSource: ds })
+            }}
+            onCreateDataSourceFailed={(err) => {
+              console.error('Erreur création source votes:', err)
+            }}
+            widgetId={this.props.id}
+          >
+            {this.renderContent()}
+          </DataSourceComponent>
+            )
+          : (
+              this.renderContent()
+            )}
+      </DataSourceComponent>
+        )
+      : (
+          this.renderContent()
+        )
+
+    // Rendu final avec le détecteur de redimensionnement
+    return (
+      <div className="widget-enhanced-list jimu-widget h-100" ref={this.containerRef}>
+        <ReactResizeDetector handleWidth handleHeight onResize={this.handleResize}>
+          {content}
         </ReactResizeDetector>
       </div>
     )

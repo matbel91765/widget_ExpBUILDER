@@ -12,18 +12,11 @@
     "hasConfig": true,
     "hasSettingPage": true,
     "supportAutoSize": true,
-    "hasLayoutItemSettingPage": true,
-    "supportResizeToContent": false,
-    "lockLayout": false,
-    "layoutType": "Fixed",
     "supportInlineEditing": true,
     "supportRepeat": true,
-    "supportDataAction": true,
-    "hasDataSupport": true,
-    "canCreateDataSource": true,
-    "supportEditData": true,
     "watchViewportVisibility": true,
-    "supportEditDataSource": true
+    "hasDataSupport": true,
+    "supportMultiDataSource": true
   },
   "translatedLocales": ["fr"],
   "defaultSize": {

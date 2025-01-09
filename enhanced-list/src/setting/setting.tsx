@@ -116,12 +116,17 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
   }
 
   // Gestion du changement de source de données
-  onDataSourceChange = async (useDataSources: UseDataSource[]): Promise<void> => {
+  onMainDataSourceChange = async (useDataSources: UseDataSource[]): Promise<void> => {
     if (!useDataSources || useDataSources.length === 0) {
+      // Convertir l'objet Immutable en tableau normal
+      const votesDataSource = this.props.config.votesDataSource
+        ? Immutable.asMutable(this.props.config.votesDataSource)
+        : []
+
       this.props.onSettingChange({
         id: this.props.id,
-        useDataSources: [],
-        config: this.props.config.set('useDataSource', [])
+        useDataSources: votesDataSource,
+        config: this.props.config.set('mainDataSource', [])
       })
       return
     }
@@ -132,12 +137,12 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
         fields: ['*'],
         useFieldsInPopupInfo: true,
         useFieldsInSymbol: false,
-        enableEdit: true, // Forcé à true pour permettre l'édition
+        enableEdit: true,
         enableCreate: false,
         enableDelete: false,
-        isEditableDataSource: true, // indique que la source est éditable
-        supportUpdateRecords: true, // active explicitement la mise à jour
-        editableInfo: { // configuration détaillée de l'édition
+        isEditableDataSource: true,
+        supportUpdateRecords: true,
+        editableInfo: {
           enableCreate: false,
           enableDelete: false,
           enableEdit: true,
@@ -145,11 +150,22 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
         }
       }))
 
+      // Convertir la source des votes en tableau normal si elle existe
+      const votesDataSource = this.props.config.votesDataSource
+        ? Immutable.asMutable(this.props.config.votesDataSource)
+        : []
+
+      // Fusionner avec la source des votes
+      const combinedDataSources = [
+        ...formattedDataSources,
+        ...votesDataSource
+      ]
+
       this.props.onSettingChange({
         id: this.props.id,
-        useDataSources: formattedDataSources,
+        useDataSources: combinedDataSources,
         config: this.props.config
-          .set('useDataSource', formattedDataSources)
+          .set('mainDataSource', formattedDataSources)
           .set('enableScore', true)
           .set('editingEnabled', true)
           .set('allowUpdates', true)
@@ -157,6 +173,32 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
     } catch (error) {
       console.error('Erreur lors de la configuration:', error)
       this.setState({ invalidDataSource: true })
+    }
+  }
+
+  onVotesDataSourceChange = async (useDataSources: UseDataSource[]): Promise<void> => {
+    try {
+      const votesDs = useDataSources?.[0]
+
+      // Convertir la source principale en tableau normal si elle existe
+      const mainDataSource = this.props.config.mainDataSource
+        ? Immutable.asMutable(this.props.config.mainDataSource)
+        : []
+
+      const combinedDataSources = [
+        ...mainDataSource,
+        ...useDataSources
+      ]
+
+      this.props.onSettingChange({
+        id: this.props.id,
+        config: this.props.config
+          .set('votesDataSource', useDataSources)
+          .set('votesDataSourceId', votesDs?.dataSourceId),
+        useDataSources: combinedDataSources
+      })
+    } catch (error) {
+      console.error('Erreur lors de la configuration de la source des votes:', error)
     }
   }
 
@@ -236,8 +278,8 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
             <DataSourceSelector
                 types={Immutable([AllDataSourceTypes.FeatureLayer])}
                 mustUseDataSource={true}
-                useDataSources={this.props.useDataSources || Immutable([])}
-                onChange={this.onDataSourceChange}
+                useDataSources={this.props.config.mainDataSource || Immutable([])}
+                onChange={this.onMainDataSourceChange }
                 widgetId={this.props.id}
                 className="w-100"
                 isMultiple={false}
@@ -258,13 +300,13 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
         {useDataSources && useDataSources.length > 0 && (
           <SettingSection title="Champs à afficher">
             <SettingRow>
-            <FieldSelector
-                useDataSources={this.props.useDataSources}
+              <FieldSelector
+                useDataSources={this.props.config.mainDataSource || Immutable([])}
                 onChange={this.onDisplayFieldsChange}
-                selectedFields={this.props.useDataSources[0].fields || Immutable([])}
+                selectedFields={this.props.config.mainDataSource?.[0]?.fields || Immutable([])}
                 isMultiple={true}
                 types={this.state.supportedTypes}
-            />
+              />
             </SettingRow>
           </SettingSection>
         )}
@@ -323,6 +365,83 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
               </div>
             </SettingRow>
           )}
+        </SettingSection>
+
+        <SettingSection title="Configuration des votes">
+          <SettingRow>
+            <div className="w-100">
+              <Label>Source de données des votes</Label>
+              <DataSourceSelector
+                types={Immutable([AllDataSourceTypes.FeatureLayer])}
+                mustUseDataSource={true}
+                useDataSources={this.props.config.votesDataSource || Immutable([])}
+                onChange={useDataSources => {
+                  console.log('Changement de la source des votes:', useDataSources)
+
+                  // Si aucune source n'est sélectionnée (suppression)
+                  if (!useDataSources || useDataSources.length === 0) {
+                    this.props.onSettingChange({
+                      id: this.props.id,
+                      config: this.props.config
+                        .set('votesDataSource', [])
+                        .set('votesDataSourceId', null),
+                      useDataSources: this.props.config.mainDataSource
+                        ? Immutable.asMutable(this.props.config.mainDataSource)
+                        : []
+                    })
+                    return
+                  }
+
+                  const votesDs = useDataSources[0]
+                  const mainDataSource = this.props.config.mainDataSource
+                    ? Immutable.asMutable(this.props.config.mainDataSource)
+                    : []
+
+                  // Configuration complète de la source des votes
+                  const formattedVotesSource = {
+                    ...votesDs,
+                    fields: ['*'],
+                    useFieldsInPopupInfo: true,
+                    useFieldsInSymbol: false,
+                    enableEdit: true,
+                    enableCreate: true,
+                    enableDelete: false,
+                    isEditableDataSource: true,
+                    supportUpdateRecords: true,
+                    editableInfo: {
+                      enableCreate: true,
+                      enableDelete: false,
+                      enableEdit: true,
+                      enableGeometryEdit: false
+                    },
+                    // Ajout des capacités spécifiques
+                    capabilities: {
+                      supportsEditing: true,
+                      supportsCreate: true,
+                      supportsUpdate: true,
+                      supportsDelete: false,
+                      supportsQuery: true
+                    }
+                  }
+
+                  this.props.onSettingChange({
+                    id: this.props.id,
+                    config: this.props.config
+                      .set('votesDataSource', [formattedVotesSource])
+                      .set('votesDataSourceId', votesDs.dataSourceId),
+                    useDataSources: [...mainDataSource, formattedVotesSource]
+                  })
+                }}
+                widgetId={this.props.id}
+                className="w-100 mt-2"
+                isMultiple={false}
+                hideDataView={true}
+              />
+              <div className='text-disabled mt-2 small'>
+                Sélectionnez la source de données qui stockera les votes des utilisateurs
+              </div>
+            </div>
+          </SettingRow>
         </SettingSection>
       </div>
     )

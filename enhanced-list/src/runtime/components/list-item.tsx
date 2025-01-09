@@ -10,9 +10,10 @@ interface ListItemProps {
   onScoreUpdate: (recordId: string, increment: boolean) => void
   searchScore?: number
   searchActive?: boolean
+  hasVoted?: boolean
 }
 
-const ListItem: React.FC<ListItemProps> = ({ record, config, onScoreUpdate, searchScore, searchActive }) => {
+const ListItem: React.FC<ListItemProps> = ({ record, config, onScoreUpdate, searchScore, searchActive, hasVoted }) => {
   const data = record.getData()
   const currentScore = data[config.scoreField] || 0
   const tags = data.tags ? data.tags.split(',').filter(tag => tag.trim() !== '') : []
@@ -62,39 +63,47 @@ const ListItem: React.FC<ListItemProps> = ({ record, config, onScoreUpdate, sear
                 )}
 
                 {config.enableScore && (
-                  <div className='score-controls flex items-center bg-gray-50 rounded-full px-2 py-1'>
-                    <Tooltip title="Diminuer le score" placement="top">
-                      <Button
-                        size="sm"
-                        icon
-                        className="score-button hover:bg-gray-200 rounded-full p-1"
-                        onClick={(e) => {
-                          e.stopPropagation() // Pour empêcher l'ouverture du lien lors du clic sur le bouton
-                          onScoreUpdate(record.getId(), false)
-                        }}
-                      >
-                        <MinusOutlined size={16} />
-                      </Button>
-                    </Tooltip>
+                    <div className='score-controls flex items-center bg-gray-50 rounded-full px-2 py-1'>
+                      <Tooltip title={hasVoted ? 'Vous avez déjà voté' : 'Diminuer le score'} placement="top">
+                        <Button
+                          size="sm"
+                          icon
+                          className="score-button hover:bg-gray-200 rounded-full p-1"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onScoreUpdate(record.getId(), false)
+                          }}
+                          disabled={hasVoted}
+                        >
+                          <MinusOutlined size={16} />
+                        </Button>
+                      </Tooltip>
 
-                    <span className="mx-3 font-medium text-gray-700">
-                      {currentScore}
-                    </span>
+                      <span className="mx-3 font-medium text-gray-700">
+                        {currentScore}
+                      </span>
 
-                    <Tooltip title="Augmenter le score" placement="top">
-                      <Button
-                        size="sm"
-                        icon
-                        className="score-button hover:bg-gray-200 rounded-full p-1"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onScoreUpdate(record.getId(), true)
-                        }}
-                      >
-                        <PlusOutlined size={16} />
-                      </Button>
-                    </Tooltip>
-                  </div>
+                      <Tooltip title={hasVoted ? 'Vous avez déjà voté' : 'Augmenter le score'} placement="top">
+                        <Button
+                          size="sm"
+                          icon
+                          className="score-button hover:bg-gray-200 rounded-full p-1"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onScoreUpdate(record.getId(), true)
+                          }}
+                          disabled={hasVoted}
+                        >
+                          <PlusOutlined size={16} />
+                        </Button>
+                      </Tooltip>
+
+                      {hasVoted && (
+                        <span className="ml-2 text-xs text-gray-500">
+                          ✓ Voté
+                        </span>
+                      )}
+                    </div>
                 )}
               </div>
             </div>
