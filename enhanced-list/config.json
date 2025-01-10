@@ -1,3 +1,9 @@
 {
-  "exampleConfigProperty": "test"
+  "mainDataSource": [],
+  "votesDataSource": [],
+  "displayFields": [],
+  "enableScore": false,
+  "scoreField": "",
+  "layoutStyle": "list",
+  "votesDataSourceId": ""
 }

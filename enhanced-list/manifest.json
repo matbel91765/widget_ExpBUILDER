@@ -11,12 +11,7 @@
   "properties": {
     "hasConfig": true,
     "hasSettingPage": true,
-    "supportAutoSize": true,
-    "supportInlineEditing": true,
-    "supportRepeat": true,
-    "watchViewportVisibility": true,
-    "hasDataSupport": true,
-    "supportMultiDataSource": true
+    "supportAutoSize": true
   },
   "translatedLocales": ["fr"],
   "defaultSize": {

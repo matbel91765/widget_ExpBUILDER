@@ -29,6 +29,9 @@ interface State {
   containerWidth: number
   containerHeight: number
   selectedTag: string | null
+  currentPage: number
+  hasMoreItems: boolean
+  isLoadingMore: boolean
   searchActive: boolean
   searchScores: { [key: string]: number }
   originalRecords: DataRecord[]
@@ -37,7 +40,6 @@ interface State {
   selectedProduct: string | null
   selectedLanguage: string | null
   loadingMore: boolean
-  itemsToShow: number
   votesDataSource: DataSource | null
   userVotes: Set<string>
 }
@@ -45,9 +47,6 @@ interface State {
 export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>, State> {
   // Référence pour le conteneur principal du widget
   containerRef: React.RefObject<HTMLDivElement>
-
-  editingPromise: Promise<boolean> | null = null
-  isEditingInitialized = false
 
   constructor (props) {
     super(props)
@@ -61,6 +60,9 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
       containerWidth: 0,
       containerHeight: 0,
       selectedTag: null,
+      currentPage: 1,
+      hasMoreItems: true,
+      isLoadingMore: false,
       searchActive: false,
       searchScores: {},
       originalRecords: [],
@@ -69,7 +71,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
       selectedProduct: null,
       selectedLanguage: null,
       loadingMore: false,
-      itemsToShow: 20,
       votesDataSource: null,
       userVotes: new Set<string>()
     }
@@ -78,22 +79,16 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
 
   queryParams: SqlQueryParams = {
     page: 1,
-    pageSize: 19000,
+    pageSize: 50,
     outFields: ['*'],
     where: '1=1',
-    orderByFields: ['objectid ASC'],
+    orderByFields: ['score DESC'],
     honorOutFields: true
   }
 
   // On l'appelle quand la source de donnée est crée
   onDataSourceCreated = async (ds: DataSource): Promise<void> => {
     try {
-      console.log('1. Source créée:', {
-        id: ds?.id,
-        type: ds?.type,
-        status: ds?.getStatus()
-      })
-
       if (!('query' in ds)) {
         console.error('La source de données ne supporte pas les requêtes')
         this.setState({
@@ -103,43 +98,22 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
         return
       }
 
-      // Mise à jour de l'état avec la source de données
-      this.setState({
-        dataSource: ds,
-        isLoading: true
-      })
-
-      // On attend que la source soit prête
-      await ds.ready()
-      console.log('2. Source prête, statut:', ds.getStatus())
-
-      // On  exécute la requête directement
-      const sqlQuery: SqlQueryParams = {
-        page: 1,
-        pageSize: this.queryParams.pageSize,
-        where: '1=1',
-        outFields: ['*'],
-        orderByFields: ['objectid ASC']
-      }
-
-      const queryRecords = await ((ds as QueriableDataSource).query)(sqlQuery)
-      console.log('3. Résultats de la requête:', {
-        success: !!queryRecords,
-        recordCount: queryRecords?.records?.length
-      })
-
-      if (queryRecords?.records?.length > 0) {
+      // Si c'est la source principale
+      if (ds.id === this.props.config.mainDataSource?.[0]?.dataSourceId) {
         this.setState({
-          records: queryRecords.records,
-          originalRecords: queryRecords.records, // Sauvegarde des records originaux
-          isLoading: false,
-          error: null
+          dataSource: ds,
+          isLoading: true
         })
-      } else {
+
+        await ds.ready()
+        await this.loadPage(1)
+      } else if (ds.id === this.props.config.votesDataSourceId) {
+        await ds.ready()
         this.setState({
-          records: [],
-          isLoading: false,
-          error: 'Aucune donnée trouvée'
+          votesDataSource: ds
+        }, () => {
+          // Chargement des votes après la mise à jour de l'état
+          this.loadUserVotes()
         })
       }
     } catch (error) {
@@ -147,6 +121,42 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
       this.setState({
         isLoading: false,
         error: 'Erreur lors du chargement de la source de données'
+      })
+    }
+  }
+
+  // Fonction de chargement d'une page spécifique
+  loadPage = async (page: number): Promise<void> => {
+    const { dataSource } = this.state
+
+    if (!dataSource) return
+
+    try {
+      const sqlQuery: SqlQueryParams = {
+        ...this.queryParams,
+        page,
+        pageSize: this.queryParams.pageSize
+      }
+
+      const queryRecords = await ((dataSource as QueriableDataSource).query)(sqlQuery)
+
+      const newRecords = queryRecords?.records || []
+
+      this.setState(prevState => ({
+        records: page === 1 ? newRecords : [...prevState.records, ...newRecords],
+        originalRecords: page === 1 ? newRecords : [...prevState.originalRecords, ...newRecords],
+        currentPage: page,
+        hasMoreItems: newRecords.length === this.queryParams.pageSize,
+        isLoading: false,
+        isLoadingMore: false,
+        error: null
+      }))
+    } catch (error) {
+      console.error('Erreur lors du chargement de la page:', error)
+      this.setState({
+        isLoading: false,
+        isLoadingMore: false,
+        error: 'Erreur lors du chargement des données'
       })
     }
   }
@@ -160,79 +170,31 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
     console.error('Erreur de création de la source de données:', err)
   }
 
-  // Chargement des enregistrements depuis la source de données
-  loadRecords = async (ds: DataSource): Promise<void> => {
-    try {
-      console.log('Début du chargement des records')
-
-      await ds.ready()
-      console.log('Source de données prête')
-
-      const sourceRecords = ds.getSourceRecords()
-      let records = ds.getRecords()
-
-      if (!records || records.length === 0) {
-        records = sourceRecords
-      }
-
-      if (records && records.length > 0) {
-        this.setState({
-          records,
-          originalRecords: records, // Maintenir les records originaux
-          isLoading: false,
-          error: null
-        })
-      } else {
-        this.setState({
-          records: [],
-          originalRecords: [],
-          isLoading: false,
-          error: 'Aucune donnée trouvée dans la source de données'
-        })
-      }
-    } catch (error) {
-      console.error('Erreur détaillée lors du chargement:', error)
-      this.setState({
-        isLoading: false,
-        error: `Erreur lors du chargement des données: ${error.message}`,
-        records: [],
-        originalRecords: []
-      })
-    }
-  }
-
+  // Fonction pour le chargement des données lors du scroll de la liste
   handleScroll = (event: React.UIEvent<HTMLDivElement>) => {
     const { scrollTop, clientHeight, scrollHeight } = event.currentTarget
     const threshold = 100 // pixels avant la fin du scroll
-    const { loadingMore, itemsToShow, records } = this.state
+    const { isLoadingMore, hasMoreItems } = this.state
 
-    // On vérifie aussi si on a déjà chargé toutes les données disponibles
-    if (!loadingMore &&
-        scrollHeight - scrollTop - clientHeight < threshold &&
-        itemsToShow < records.length) { // Ajout de cette condition
-      this.loadMoreItems()
+    if (!isLoadingMore &&
+        hasMoreItems &&
+        scrollHeight - scrollTop - clientHeight < threshold) {
+      this.loadNextPage()
     }
   }
 
-  loadMoreItems = () => {
-    // On vérifie d'abord si il y a encore des éléments à charger
-    const { itemsToShow, records } = this.state
-    const hasMoreItems = itemsToShow < records.length
+  // Fonction pour charger la page suivante
+  loadNextPage = () => {
+    const { currentPage, isLoadingMore } = this.state
 
-    if (!hasMoreItems) return
+    if (isLoadingMore) return
 
-    this.setState(prevState => ({
-      loadingMore: true
-    }), () => {
-      setTimeout(() => {
-        this.setState(prevState => ({
-          itemsToShow: Math.min(prevState.itemsToShow + 20, records.length), // On limite au nombre total d'éléments
-          loadingMore: false
-        }))
-      }, 500)
+    this.setState({ isLoadingMore: true }, () => {
+      this.loadPage(currentPage + 1)
     })
   }
 
+  //  Fonction pour éviter les doublons dans la liste
   getUniqueValues = (field: string): string[] => {
     const { originalRecords } = this.state
     const values = new Set<string>()
@@ -245,6 +207,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
     return Array.from(values).sort()
   }
 
+  // Fonction pour les filtres
   handleFilterChange = (filterType: string, value: string) => {
     this.setState({
       [`selected${filterType}`]: value,
@@ -343,15 +306,13 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
         this.setState({
           records: sortedRecords,
           searchActive: true,
-          searchScores: Object.fromEntries(searchScores),
-          itemsToShow: 20
+          searchScores: Object.fromEntries(searchScores)
         })
       } else {
         this.setState({
           records: [],
           searchActive: true,
-          searchScores: {},
-          itemsToShow: 20
+          searchScores: {}
         })
       }
     } catch (error) {
@@ -359,7 +320,8 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
     }
   }
 
-  private readonly buildWhereClause = (field: string, value: string): string => {
+  // Fonction pour rendre la recherche insensible à la casse
+  buildWhereClause = (field: string, value: string): string => {
     const escapedValue = value.replace(/'/g, "''")
     return `LOWER(${field}) LIKE LOWER('%${escapedValue}%')`
   }
@@ -426,6 +388,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
     return similarity > 40 ? Math.round(similarity) : 0
   }
 
+  // Fonction de Levenshtein
   levenshteinDistance = (str1: string, str2: string): number => {
     const matrix = Array(str2.length + 1).fill(null).map(() =>
       Array(str1.length + 1).fill(null)
@@ -448,11 +411,13 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
     return matrix[str2.length][str1.length]
   }
 
+  // Fonction pour mettre à jour le score
   handleScoreUpdate = async (recordId: string, increment: boolean): Promise<void> => {
     const { dataSource, records, votesDataSource } = this.state
     const { scoreField, votesDataSourceId } = this.props.config
     const currentUser = this.props.user?.username
 
+    /*
     console.log('État des sources de données:', {
       mainDS: {
         ready: !!dataSource?.ready,
@@ -469,6 +434,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
         votesDataSourceId: this.props.config.votesDataSourceId
       }
     })
+    */
 
     if (!dataSource || !scoreField || !currentUser) {
       console.log('Vérification initiale:', {
@@ -480,15 +446,8 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
       throw new Error('Configuration invalide ou utilisateur non connecté')
     }
 
-    console.log('Config du widget:', {
-      hasVotesDS: !!this.props.config.votesDataSource,
-      votesDataSourceId: this.props.config.votesDataSourceId,
-      votesDataSourceConfig: this.props.config.votesDataSource
-    })
-
     try {
       await dataSource.ready()
-      console.log('Source de données principale prête')
 
       // Vérification détaillée de la source des votes
       if (!votesDataSource) {
@@ -501,13 +460,15 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
       }
 
       await votesDataSource.ready()
+      /*
       console.log('Source des votes prête:', {
         id: votesDataSource.id,
         status: votesDataSource.getStatus()
       })
+      */
 
       const hasVoted = await this.checkUserVote(votesDataSource, recordId, currentUser)
-      console.log('Vérification du vote:', { hasVoted, recordId, currentUser })
+      // console.log('Vérification du vote:', { hasVoted, recordId, currentUser })
 
       if (hasVoted) {
         console.log('Vote déjà existant pour:', { recordId, currentUser })
@@ -534,6 +495,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
         }
       }
 
+      /*
       console.log('Tentative de mise à jour du score:', {
         recordId,
         currentScore,
@@ -541,6 +503,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
         updateFeature,
         url: applyEditsUrl
       })
+      */
 
       // Mise à jour du score
       const response = await fetch(applyEditsUrl, {
@@ -563,36 +526,8 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
       const result = await response.json()
       console.log('Résultat de la mise à jour:', result)
 
-      const voteFeature = {
-        attributes: {
-          // Conversion explicite des types
-          ElementID: String(recordId), // S'assurer que c'est une chaîne
-          UserID: String(currentUser), // S'assurer que c'est une chaîne
-          DateVote: new Date().getTime() // Timestamp en millisecondes
-        }
-      }
-
-      // Log détaillé de la structure
-      console.log('Structure complète du vote:', {
-        schema: votesDataSource.getSchema(),
-        feature: voteFeature,
-        fields: Object.entries(voteFeature.attributes).map(([key, value]) => ({
-          name: key,
-          type: typeof value,
-          value
-        }))
-      })
-
-      // Vérification des capacités
-      const capabilities = (votesDataSource as any).capabilities
-      console.log('Capacités de la source:', {
-        capabilities,
-        supportsCreate: capabilities?.supportsCreate,
-        supportsEditing: capabilities?.supportsEditing
-      })
-
       if (result.updateResults?.[0]?.success) {
-        console.log('Mise à jour du score réussie, tentative d\'ajout du vote')
+        // console.log('Mise à jour du score réussie, tentative d\'ajout du vote')
 
         if (votesDataSource) {
           try {
@@ -630,7 +565,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
             }
 
             const voteResult = await voteResponse.json()
-            console.log('Résultat complet de l\'ajout du vote:', voteResult)
+            // console.log('Résultat complet de l\'ajout du vote:', voteResult)
 
             if (voteResult.addResults?.[0]?.success) {
               // Succès - mise à jour de l'interface
@@ -676,27 +611,37 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
     const currentUser = this.props.user?.username
 
     if (!votesDataSource || !currentUser) {
+      console.log('Impossible de charger les votes:', {
+        hasVotesDS: !!votesDataSource,
+        hasUser: !!currentUser
+      })
       return
     }
 
     try {
-      // Conversion des paramètres en chaînes de caractères
       const queryParams = {
-        where: `UserID = '${currentUser}'`,
-        outFields: 'ElementID', // Changé en chaîne au lieu d'un tableau
+        where: `userid = '${currentUser.toLowerCase()}'`,
+        outFields: 'elementid',
         f: 'json'
       }
 
-      const response = await fetch(`${(votesDataSource as any).url}/query?${new URLSearchParams(queryParams)}`)
+      const response = await fetch(
+          `${(votesDataSource as any).url}/query?${new URLSearchParams(queryParams)}`
+      )
+
+      if (!response.ok) {
+        throw new Error(`Erreur HTTP: ${response.status}`)
+      }
+
       const result = await response.json()
 
       if (result.features) {
-        // Création d'un nouveau Set avec typage explicite
         const votes = new Set<string>(
-          result.features.map((f: any) => String(f.attributes.ElementID))
+          result.features.map((f: any) => String(f.attributes.elementid))
         )
 
-        // Maintenant que votes est correctement typé, nous pouvons le mettre dans l'état
+        console.log(`${votes.size} votes chargés pour l'utilisateur ${currentUser}`)
+
         this.setState({ userVotes: votes })
       }
     } catch (error) {
@@ -705,7 +650,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
   }
 
   // Fonction auxiliaire pour vérifier si l'utilisateur a déjà voté
-  private async checkUserVote (
+  async checkUserVote (
     votesDataSource: DataSource | null,
     elementId: string,
     username: string | undefined
@@ -718,7 +663,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
       // Conversion des paramètres pour respecter le type Record<string, string>
       const queryParams = {
         where: `ElementID = '${elementId}' AND UserID = '${username}'`,
-        returnCountOnly: 'true', // Converti en string au lieu de boolean
+        returnCountOnly: 'true', // Optimisation on retourne uniquement le nombre de résultat (si > 0 c'est que l'utilisateur a déjà voté sinon il n'a pas encore voté)
         f: 'json'
       }
 
@@ -749,7 +694,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
     return !!useDataSources && useDataSources.length > 0
   }
 
-  // Rendu du contenu principal du widget
+  // Méthode Helper qui gère l'affichage du contenu interne du widget (état de chargement, erreur, filtrage, filtres, liste des résultats)
   renderContent = (): JSX.Element => {
     const {
       records,
@@ -765,6 +710,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
     } = this.state
     const { config } = this.props
 
+    /*
     console.log('Rendu du contenu:', {
       recordCount: records?.length,
       isLoading,
@@ -772,6 +718,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
       configStatus: this.isDsConfigured(),
       dataSourceStatus: dataSource?.getStatus()
     })
+    */
 
     if (isLoading) {
       return (
@@ -910,7 +857,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
             className="results-list"
             onScroll={this.handleScroll}
           >
-            {filteredRecords.slice(0, this.state.itemsToShow).map(record => (
+            {filteredRecords.map(record => (
               <ListItem
                 key={record.getId()}
                 record={record}
@@ -922,7 +869,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
               />
             ))}
 
-            {this.state.loadingMore && (
+            {this.state.isLoadingMore && (
               <div className="flex justify-center p-4">
                 <Loading />
               </div>
@@ -934,6 +881,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
     )
   }
 
+  // Méthode principale qui gère la structure globale du widget et la mise en place des DatSourceComponent
   render (): JSX.Element {
     // Récupération des props nécessaires
     const { useDataSources, config } = this.props

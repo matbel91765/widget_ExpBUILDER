@@ -65,18 +65,20 @@ const ListItem: React.FC<ListItemProps> = ({ record, config, onScoreUpdate, sear
                 {config.enableScore && (
                     <div className='score-controls flex items-center bg-gray-50 rounded-full px-2 py-1'>
                       <Tooltip title={hasVoted ? 'Vous avez déjà voté' : 'Diminuer le score'} placement="top">
-                        <Button
-                          size="sm"
-                          icon
-                          className="score-button hover:bg-gray-200 rounded-full p-1"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onScoreUpdate(record.getId(), false)
-                          }}
-                          disabled={hasVoted}
-                        >
-                          <MinusOutlined size={16} />
-                        </Button>
+                        <span>
+                          <Button
+                            size="sm"
+                            icon
+                            className="score-button hover:bg-gray-200 rounded-full p-1"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onScoreUpdate(record.getId(), false)
+                            }}
+                            disabled={hasVoted}
+                          >
+                            <MinusOutlined size={16} />
+                          </Button>
+                        </span>
                       </Tooltip>
 
                       <span className="mx-3 font-medium text-gray-700">
@@ -84,18 +86,20 @@ const ListItem: React.FC<ListItemProps> = ({ record, config, onScoreUpdate, sear
                       </span>
 
                       <Tooltip title={hasVoted ? 'Vous avez déjà voté' : 'Augmenter le score'} placement="top">
-                        <Button
-                          size="sm"
-                          icon
-                          className="score-button hover:bg-gray-200 rounded-full p-1"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onScoreUpdate(record.getId(), true)
-                          }}
-                          disabled={hasVoted}
-                        >
-                          <PlusOutlined size={16} />
-                        </Button>
+                        <span>
+                          <Button
+                            size="sm"
+                            icon
+                            className="score-button hover:bg-gray-200 rounded-full p-1"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onScoreUpdate(record.getId(), true)
+                            }}
+                            disabled={hasVoted}
+                          >
+                            <PlusOutlined size={16} />
+                          </Button>
+                        </span>
                       </Tooltip>
 
                       {hasVoted && (
