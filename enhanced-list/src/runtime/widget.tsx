@@ -12,7 +12,7 @@ import {
 } from 'jimu-core'
 
 import { type IMConfig } from '../config'
-import { Loading, Select } from 'jimu-ui'
+import { Card, CardBody, Loading, Select } from 'jimu-ui'
 import ListItem from './components/list-item'
 import EmptyState from './components/empty-state'
 import SearchBox from './components/search-box'
@@ -246,7 +246,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
         whereClause = fieldClauses.join(' OR ')
       }
 
-      console.log('Clause WHERE:', whereClause) // Pour debug
+      // console.log('Clause WHERE:', whereClause)
 
       const searchQuery: SqlQueryParams = {
         where: whereClause,
@@ -640,8 +640,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
           result.features.map((f: any) => String(f.attributes.elementid))
         )
 
-        console.log(`${votes.size} votes chargés pour l'utilisateur ${currentUser}`)
-
         this.setState({ userVotes: votes })
       }
     } catch (error) {
@@ -700,9 +698,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
       records,
       isLoading,
       error,
-      dataSource,
       searchActive,
-      originalRecords,
       selectedSource,
       selectedCategory,
       selectedProduct,
@@ -735,32 +731,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
 
     if (!this.isDsConfigured()) {
       return <EmptyState message="Veuillez configurer une source de données" type="noConfig" />
-    }
-
-    if (!records || records.length === 0) {
-      const status = dataSource?.getStatus() || 'status inconnu'
-      return <EmptyState message={`Aucune donnée à afficher (${status})`} type="noData" />
-    }
-
-    // Vérification spécifique pour la recherche sans résultats
-    if (searchActive && records.length === 0) {
-      return <EmptyState
-      message="Aucun résultat ne correspond à votre recherche"
-      type="noSearchResults"
-    />
-    }
-
-    // Vérification générale des données
-    if (!originalRecords || originalRecords.length === 0) {
-      return <EmptyState message="Aucune donnée disponible" type="noData" />
-    }
-
-    // Si nous avons des données mais aucun résultat filtré
-    if (records.length === 0) {
-      return <EmptyState
-        message="Aucun élément ne correspond aux critères de filtrage"
-        type="noSearchResults"
-      />
     }
 
     // Filtrer les records selon les critères sélectionnés
@@ -857,17 +827,36 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
             className="results-list"
             onScroll={this.handleScroll}
           >
-            {filteredRecords.map(record => (
-              <ListItem
-                key={record.getId()}
-                record={record}
-                config={config}
-                onScoreUpdate={this.handleScoreUpdate}
-                searchScore={this.state.searchScores[record.getId()]}
-                searchActive={searchActive}
-                hasVoted={this.state.userVotes.has(record.getId())}
-              />
-            ))}
+            {filteredRecords.length > 0
+              ? (
+                  filteredRecords.map(record => (
+                    <ListItem
+                      key={record.getId()}
+                      record={record}
+                      config={config}
+                      onScoreUpdate={this.handleScoreUpdate}
+                      searchScore={this.state.searchScores[record.getId()]}
+                      searchActive={searchActive}
+                      hasVoted={this.state.userVotes.has(record.getId())}
+                    />
+                  ))
+                )
+              : (
+                  <Card className='list-item transform transition-all duration-200'>
+                    <CardBody className="p-6">
+                      <div className="flex justify-center items-center">
+                        <div className="text-center">
+                          <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                            Aucun résultat trouvé
+                          </h3>
+                          <p className="text-gray-600">
+                            Essayez de modifier vos termes de recherche
+                          </p>
+                        </div>
+                      </div>
+                    </CardBody>
+                  </Card>
+                )}
 
             {this.state.isLoadingMore && (
               <div className="flex justify-center p-4">
@@ -904,13 +893,8 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
           ? (
           <DataSourceComponent
             useDataSource={votesDataSource}
-            onDataSourceCreated={(ds) => {
-              console.log('Source des votes créée:', ds)
-              this.setState({ votesDataSource: ds })
-            }}
-            onCreateDataSourceFailed={(err) => {
-              console.error('Erreur création source votes:', err)
-            }}
+            onDataSourceCreated={this.onDataSourceCreated}
+            onCreateDataSourceFailed={this.onCreateDataSourceFailed}
             widgetId={this.props.id}
           >
             {this.renderContent()}

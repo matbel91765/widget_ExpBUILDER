@@ -10,13 +10,18 @@ interface ListItemProps {
   onScoreUpdate: (recordId: string, increment: boolean) => void
   searchScore?: number
   searchActive?: boolean
-  hasVoted?: boolean
+  hasVoted: boolean
 }
 
 const ListItem: React.FC<ListItemProps> = ({ record, config, onScoreUpdate, searchScore, searchActive, hasVoted }) => {
   const data = record.getData()
   const currentScore = data[config.scoreField] || 0
   const tags = data.tags ? data.tags.split(',').filter(tag => tag.trim() !== '') : []
+
+  // Création de styles conditionnels pour les boutons
+  const buttonBaseStyle = 'score-button rounded-full p-1'
+  const buttonDisabledStyle = hasVoted ? 'bg-gray-200 cursor-not-allowed opacity-50' : 'hover:bg-gray-200'
+  const buttonStyle = `${buttonBaseStyle} ${buttonDisabledStyle}`
 
   return (
     <Card
@@ -63,51 +68,61 @@ const ListItem: React.FC<ListItemProps> = ({ record, config, onScoreUpdate, sear
                 )}
 
                 {config.enableScore && (
-                    <div className='score-controls flex items-center bg-gray-50 rounded-full px-2 py-1'>
-                      <Tooltip title={hasVoted ? 'Vous avez déjà voté' : 'Diminuer le score'} placement="top">
-                        <span>
-                          <Button
-                            size="sm"
-                            icon
-                            className="score-button hover:bg-gray-200 rounded-full p-1"
-                            onClick={(e) => {
-                              e.stopPropagation()
+                  <div className='score-controls flex items-center bg-gray-50 rounded-full px-2 py-1'>
+                    <Tooltip title={hasVoted ? 'Vous avez déjà voté' : 'Diminuer le score'} placement="top">
+                      <span>
+                        <Button
+                          size="sm"
+                          icon
+                          className={buttonStyle}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (!hasVoted) {
                               onScoreUpdate(record.getId(), false)
-                            }}
-                            disabled={hasVoted}
-                          >
-                            <MinusOutlined size={16} />
-                          </Button>
-                        </span>
-                      </Tooltip>
-
-                      <span className="mx-3 font-medium text-gray-700">
-                        {currentScore}
+                            }
+                          }}
+                          disabled={hasVoted}
+                        >
+                          <MinusOutlined
+                            size={16}
+                            className={hasVoted ? 'text-gray-400' : 'text-gray-700'}
+                          />
+                        </Button>
                       </span>
+                    </Tooltip>
 
-                      <Tooltip title={hasVoted ? 'Vous avez déjà voté' : 'Augmenter le score'} placement="top">
-                        <span>
-                          <Button
-                            size="sm"
-                            icon
-                            className="score-button hover:bg-gray-200 rounded-full p-1"
-                            onClick={(e) => {
-                              e.stopPropagation()
+                    <span className="mx-3 font-medium text-gray-700">
+                      {currentScore}
+                    </span>
+
+                    <Tooltip title={hasVoted ? 'Vous avez déjà voté' : 'Augmenter le score'} placement="top">
+                      <span>
+                        <Button
+                          size="sm"
+                          icon
+                          className={buttonStyle}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (!hasVoted) {
                               onScoreUpdate(record.getId(), true)
-                            }}
-                            disabled={hasVoted}
-                          >
-                            <PlusOutlined size={16} />
-                          </Button>
-                        </span>
-                      </Tooltip>
+                            }
+                          }}
+                          disabled={hasVoted}
+                        >
+                          <PlusOutlined
+                            size={16}
+                            className={hasVoted ? 'text-gray-400' : 'text-gray-700'}
+                          />
+                        </Button>
+                      </span>
+                    </Tooltip>
 
-                      {hasVoted && (
-                        <span className="ml-2 text-xs text-gray-500">
-                          ✓ Voté
-                        </span>
-                      )}
-                    </div>
+                    {hasVoted && (
+                      <span className="ml-2 text-xs text-gray-500">
+                        ✓ Voté
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
